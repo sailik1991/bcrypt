@@ -1,11 +1,10 @@
 package impl;
 
-import com.sun.org.apache.xml.internal.security.exceptions.Base64DecodingException;
-import com.sun.org.apache.xml.internal.security.utils.Base64;
-
 import java.io.UnsupportedEncodingException;
 import java.security.SecureRandom;
 import java.util.Arrays;
+
+import util.Base64Util;
 
 public class BCryptImpl {
   /**
@@ -210,12 +209,13 @@ public class BCryptImpl {
     StringBuilder encodedSalt = new StringBuilder();
 
     encodedSalt.append("$2a$");
-    String rounds = (String) ((keygen_rounds < 10) ? "0" + keygen_rounds : keygen_rounds);
+    String rounds = (keygen_rounds < 10) ? "0" + Integer.toString(keygen_rounds)
+        : Integer.toString(keygen_rounds);
     encodedSalt.append(rounds + "$");
 
     byte r[] = new byte[SALT_LENGTH];
     rand.nextBytes(r);
-    encodedSalt.append(Base64.encode(r, r.length));
+    encodedSalt.append(Base64Util.encode(r, r.length));
     return encodedSalt.toString();
   }
 
@@ -252,18 +252,25 @@ public class BCryptImpl {
       throw new RuntimeException("Unsupported charater set");
     }
 
-    try {
-      byteSalt = Base64.decode(saltString.substring(round_offset + 3, round_offset + 25));
-    } catch (Base64DecodingException e) {
-      e.printStackTrace();
-      throw new RuntimeException("Salt is not properly encoded.");
-    }
-
+    String salt = saltString.substring(round_offset + 3, round_offset + 25);
+    byteSalt = Base64Util.decode(salt, salt.length());
+    
     byte hashed[] = bcrypt(bytePassword, byteSalt, round_cost);
+    
+    hashedPassword.append("$2");
+    if (round_offset == 4) {
+      hashedPassword.append('a');
+    }
+    hashedPassword.append('$');
 
-    /**
-     * TODO: wrap hashed password along with cost and version parameters before returning
-     */
+    if (round_cost < 10) {
+      hashedPassword.append('0');
+    }
+    hashedPassword.append(Integer.toString(round_cost));
+    hashedPassword.append('$');
+
+    hashedPassword.append(Base64Util.encode(byteSalt, byteSalt.length));
+    hashedPassword.append(Base64Util.encode(hashed, BCRYPT_CTEXT.length * 4 - 1));
 
     return hashedPassword.toString();
   }
@@ -273,22 +280,35 @@ public class BCryptImpl {
   }
 
   private byte[] bcrypt(byte[] password, byte[] salt, int round_cost) {
-    
+
     int ctext[] = BCRYPT_CTEXT.clone();
     long rounds = 1 << round_cost;
     byte zero[] = new byte[salt.length];
-    Arrays.fill(zero, (byte)0);
-    
+    Arrays.fill(zero, (byte) 0);
+
     // InitState
     P = P_0.clone();
     S = S_0.clone();
     expandKey(salt, password);
-    for ( long i = 0; i != rounds; i++) {
+    for (long i = 0; i != rounds; i++) {
       expandKey(zero, salt);
       expandKey(zero, password);
     }
+
+    for (int i = 0; i < 64; i++) {
+      for (int j = 0; j < (ctext.length >> 1); j++)
+        encipher(ctext, j << 1);
+    }
     
-    return null;
+    byte ret[] = new byte[ctext.length * 4];
+    for (int i = 0, j = 0; i < ctext.length; i++) {
+        ret[j++] = (byte)((ctext[i] >> 24) & 0xff);
+        ret[j++] = (byte)((ctext[i] >> 16) & 0xff);
+        ret[j++] = (byte)((ctext[i] >> 8) & 0xff);
+        ret[j++] = (byte)(ctext[i] & 0xff);
+    }
+
+    return ret;
   }
 
   private void expandKey(byte salt[], byte password[]) {
@@ -317,21 +337,47 @@ public class BCryptImpl {
   }
 
   /**
-   * TODO : extract work from salt/password/0
+   * TODO : code
+   * 
    * @param data
    * @param offp
    * @return
    */
   private static int extractWordForXoring(byte data[], int offp[]) {
-    return 0;
+    int i;
+    int word = 0;
+    int off = offp[0];
+
+    for (i = 0; i < 4; i++) {
+      word = (word << 8) | (data[off] & 0xff);
+      off = (off + 1) % data.length;
+    }
+
+    offp[0] = off;
+    return word;
   }
-  
-  /**
-   * TODO: Encode 64 bit block and 2 32-bit blocks
-   * @param lr
-   * @param off
-   */
+
   private final void encipher(int lr[], int off) {
+    int i, n, l = lr[off], r = lr[off + 1];
+
+    l ^= P[0];
+    for (i = 0; i <= BLOWFISH_ROUNDS - 2;) {
+      // Feistel substitution on left word
+      n = S[(l >> 24) & 0xff];
+      n += S[0x100 | ((l >> 16) & 0xff)];
+      n ^= S[0x200 | ((l >> 8) & 0xff)];
+      n += S[0x300 | (l & 0xff)];
+      r ^= n ^ P[++i];
+
+      // Feistel substitution on right word
+      n = S[(r >> 24) & 0xff];
+      n += S[0x100 | ((r >> 16) & 0xff)];
+      n ^= S[0x200 | ((r >> 8) & 0xff)];
+      n += S[0x300 | (r & 0xff)];
+      l ^= n ^ P[++i];
+    }
+    lr[off] = r ^ P[BLOWFISH_ROUNDS + 1];
+    lr[off + 1] = l;
   }
 
   /**

@@ -6,6 +6,25 @@ import java.util.Arrays;
 
 import util.Base64Util;
 
+/**
+ * 
+ * Copyright (c) 2015 sailik1991 <link2sailik@gmail.com>
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+ * associated documentation files (the "Software"), to deal in the Software without restriction,
+ * including without limitation the rights to use, copy, modify, merge, publish, distribute,
+ * sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all copies or
+ * substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+ * KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * INTHE SOFTWARE.
+ *
+ */
 public class BCryptImpl {
   /**
    * Bcrypt controls computational complexity by increasing keygen cost. Round cost increases by
@@ -25,7 +44,7 @@ public class BCryptImpl {
   /**
    * InitState setup initialized P and S-boxes with digits of Pi in Hex starting from the first
    * digit. It is essential to use a normal number and start from the first digit of Pi. Any other
-   * way of implementation might mean backdoors introduced by developers for wicked purposes.
+   * way of implementation might mean back-doors introduced by developers for wicked purposes.
    * (Nothing up my sleeve number)
    */
   private static final int P_0[] = {0x243f6a88, 0x85a308d3, 0x13198a2e, 0x03707344, 0xa4093822,
@@ -215,15 +234,15 @@ public class BCryptImpl {
 
     byte r[] = new byte[SALT_LENGTH];
     rand.nextBytes(r);
-    encodedSalt.append(Base64Util.encode(r, r.length));
+    encodedSalt.append((new Base64Util()).encode(r, r.length));
     return encodedSalt.toString();
   }
 
-  private String generateSalt() {
+  public String generateSalt() {
     return generateSalt(DEFAULT_KEYGEN_ROUNDS);
   }
 
-  private String generateSalt(int keygen_rounds) {
+  public String generateSalt(int keygen_rounds) {
     return generateSalt(keygen_rounds, new SecureRandom());
   }
 
@@ -235,7 +254,7 @@ public class BCryptImpl {
    *        with same name. Can choose to use a random salt of its own.
    * @return - the hashed password
    */
-  public String hashPassword(String password, String saltString) {
+  public String bcryptHash(String password, String saltString) {
     StringBuilder hashedPassword = new StringBuilder();
     byte bytePassword[] = null;
     byte byteSalt[] = null;
@@ -253,10 +272,29 @@ public class BCryptImpl {
     }
 
     String salt = saltString.substring(round_offset + 3, round_offset + 25);
-    byteSalt = Base64Util.decode(salt, salt.length());
-    
-    byte hashed[] = bcrypt(bytePassword, byteSalt, round_cost);
-    
+    byteSalt = (new Base64Util()).decode(salt, SALT_LENGTH);
+
+    // EksBlowfish( cost, salt, key)
+    eksBlowfishSetup(bytePassword, byteSalt, round_cost);
+
+    // ciphertext
+    int ctext[] = (int[]) BCRYPT_CTEXT.clone();
+
+    // Encrypt ciphertext 64 times
+    for (int i = 0; i < 64; i++) {
+      for (int j = 0; j < (ctext.length/2); j++)
+        encryptECB(ctext, j*2);
+    }
+
+    byte hashed[] = new byte[ctext.length * 4];
+    for (int i = 0, j = 0; i < ctext.length; i++) {
+      hashed[j++] = (byte) ((ctext[i] >> 24) & 0xff);
+      hashed[j++] = (byte) ((ctext[i] >> 16) & 0xff);
+      hashed[j++] = (byte) ((ctext[i] >> 8) & 0xff);
+      hashed[j++] = (byte) (ctext[i] & 0xff);
+    }
+
+    // Concatenate
     hashedPassword.append("$2");
     if (round_offset == 4) {
       hashedPassword.append('a');
@@ -269,116 +307,170 @@ public class BCryptImpl {
     hashedPassword.append(Integer.toString(round_cost));
     hashedPassword.append('$');
 
-    hashedPassword.append(Base64Util.encode(byteSalt, byteSalt.length));
-    hashedPassword.append(Base64Util.encode(hashed, BCRYPT_CTEXT.length * 4 - 1));
+    hashedPassword.append((new Base64Util()).encode(byteSalt, byteSalt.length));
+    hashedPassword.append((new Base64Util()).encode(hashed, BCRYPT_CTEXT.length * 4 - 1));
 
     return hashedPassword.toString();
   }
 
-  public String hashPassword(String password) {
-    return (hashPassword(password, generateSalt()));
+  public String bcryptHash(String password) {
+    return (bcryptHash(password, generateSalt()));
   }
 
-  private byte[] bcrypt(byte[] password, byte[] salt, int round_cost) {
-
-    int ctext[] = BCRYPT_CTEXT.clone();
-    long rounds = 1 << round_cost;
-    byte zero[] = new byte[salt.length];
-    Arrays.fill(zero, (byte) 0);
+  /**
+   * The code here follows the same pattern as described in the original paper
+   * "A Future-Adaptable Password Scheme" http://www.openbsd.org/papers/bcrypt-paper.ps
+   * 
+   * @param password - password as bytes
+   * @param salt - salt as bytes
+   * @param round_cost - cost of the eksBlowfishSetup of the S and P boxes
+   * @return
+   */
+  private void eksBlowfishSetup(byte password[], byte salt[], int round_cost) {
+    int rounds = 1 << round_cost;
 
     // InitState
-    P = P_0.clone();
-    S = S_0.clone();
-    expandKey(salt, password);
-    for (long i = 0; i != rounds; i++) {
-      expandKey(zero, salt);
-      expandKey(zero, password);
-    }
-
-    for (int i = 0; i < 64; i++) {
-      for (int j = 0; j < (ctext.length >> 1); j++)
-        encipher(ctext, j << 1);
-    }
+    P = (int[]) P_0.clone();
+    S = (int[]) S_0.clone();
     
-    byte ret[] = new byte[ctext.length * 4];
-    for (int i = 0, j = 0; i < ctext.length; i++) {
-        ret[j++] = (byte)((ctext[i] >> 24) & 0xff);
-        ret[j++] = (byte)((ctext[i] >> 16) & 0xff);
-        ret[j++] = (byte)((ctext[i] >> 8) & 0xff);
-        ret[j++] = (byte)(ctext[i] & 0xff);
-    }
+    // ExpandKey (state, salt, key)
+    expandKey(salt, password);
+    byte zero[] = new byte[salt.length];
+    Arrays.fill(zero, (byte)0);
+    
+    for (int i = 0; i != rounds; i++) {
+      // ExpandKey (state, 0, salt)
+      expandKey(zero, salt);
 
-    return ret;
-  }
-
-  private void expandKey(byte salt[], byte password[]) {
-    int i;
-    int koffp[] = {0}, doffp[] = {0};
-    int lr[] = {0, 0};
-
-    for (i = 0; i < P.length; i++)
-      P[i] = P[i] ^ extractWordForXoring(password, koffp);
-
-    for (i = 0; i < P.length; i += 2) {
-      lr[0] ^= extractWordForXoring(salt, doffp);
-      lr[1] ^= extractWordForXoring(salt, doffp);
-      encipher(lr, 0);
-      P[i] = lr[0];
-      P[i + 1] = lr[1];
-    }
-
-    for (i = 0; i < S.length; i += 2) {
-      lr[0] ^= extractWordForXoring(salt, doffp);
-      lr[1] ^= extractWordForXoring(salt, doffp);
-      encipher(lr, 0);
-      S[i] = lr[0];
-      S[i + 1] = lr[1];
+      // ExpandKey (state, 0, key)
+      expandKey(zero, password);
     }
   }
 
   /**
-   * TODO : code
+   * P boxes are initially XOR-ed with modifyP (which is a cyclic key - the password for the bcrypt
+   * algo) Then these P-boxes are used to encrypt the cyclic plaintext and each P is replaced after
+   * every 2 rounds. After finishing the entried of the P-box, the function goes on encrypting to
+   * replace the entry of the S-boxes. When all the S-boxes are finished, a new key schedule is
+   * obtained.
    * 
-   * @param data
-   * @param offp
+   * @param cyclicPlaintext
+   * @param modifyP
+   */
+  private void expandKey(byte cyclicPlaintext[], byte modifyP[]) {
+    int i;
+
+    // this points to the next bit that is to be used in the cyclic word. Array made for pass by
+    // reference.
+    int bitToBeUsed[] = {0};
+
+    // 64 bit plaintext - basically 2 32-bit integers
+    int plaintext[] = {0, 0};
+
+    // Replace the P-box values by XOR-ing with cyclic key
+    for (i = 0; i < P.length; i++)
+      P[i] = P[i] ^ get32BitsOfCyclicWord(modifyP, bitToBeUsed);
+
+    // reinitializing for using in salt.
+    bitToBeUsed[0] = 0;
+    // Encrypt cyclic salt and update P-box entries by XOR-ing
+    for (i = 0; i < P.length; i += 2) {
+      plaintext[0] ^= get32BitsOfCyclicWord(cyclicPlaintext, bitToBeUsed);
+      plaintext[1] ^= get32BitsOfCyclicWord(cyclicPlaintext, bitToBeUsed);
+      encryptECB(plaintext, 0);
+      P[i] = plaintext[0];
+      P[i + 1] = plaintext[1];
+    }
+
+    // Continue from above and do the same for S-box entries by XOR-ing
+    for (i = 0; i < S.length; i += 2) {
+      plaintext[0] ^= get32BitsOfCyclicWord(cyclicPlaintext, bitToBeUsed);
+      plaintext[1] ^= get32BitsOfCyclicWord(cyclicPlaintext, bitToBeUsed);
+      encryptECB(plaintext, 0);
+      S[i] = plaintext[0];
+      S[i + 1] = plaintext[1];
+    }
+  }
+
+  /**
+   * Gets the next 32 bits from an initial offset position of a cyclic work
+   * @param cyclicWord
+   * @param currentPointer
    * @return
    */
-  private static int extractWordForXoring(byte data[], int offp[]) {
-    int i;
-    int word = 0;
-    int off = offp[0];
+  private int get32BitsOfCyclicWord(byte cyclicWord[], int currentPointer[]) {
+    int finalWord = 0;
+    int pointer = currentPointer[0];
 
-    for (i = 0; i < 4; i++) {
-      word = (word << 8) | (data[off] & 0xff);
-      off = (off + 1) % data.length;
+    for (int i = 0; i < 4; i++) {
+      // shift already generated 8 bits (in the previous iteration) to make room for new.
+      // Do this 4 times to get a 32 bit
+      finalWord = (finalWord << 8) | (cyclicWord[pointer] & 0xff);
+      pointer = (pointer + 1) % cyclicWord.length;
     }
 
-    offp[0] = off;
-    return word;
+    currentPointer[0] = pointer;
+    return finalWord;
   }
 
-  private final void encipher(int lr[], int off) {
-    int i, n, l = lr[off], r = lr[off + 1];
+  /**
+   *  ------------- plainText ----------------
+   *  |                                      |
+   *  leftWord XOR P1                        rightWord
+   *  |                                      |
+   *  -------------- F( L ) -----------------XOR
+   *     -                                -
+   *           -                    -
+   *                   -      -
+   *                   -      -
+   *            -                   -
+   *      -                               -
+   *  |                                      |
+   *  leftWord XOR P1                        rightWord
+   *  |                                      |
+   *  -------------- F( L ) -----------------XOR
+   *  
+   *  
+   * a = L(0,7) = (L >> 24) & 0xff
+   * b = L(9,15) = (L >> 16) & 0xff
+   * c = L(16,23) = (L >> 8) & 0xff
+   * d = L(24,31) = (L) & 0xff
+   * 
+   * S1 = S[0,255], S2 = S[256, 511], S3 = S[512, 767] & S4 = S[768, 1023]
+   * 
+   * F(L) = ( (S1[a] + S2[b]) XOR S3[c] ) + S4[d]
+   * 
+   * @param plainText - 64-bit word - basically 2 32-bit integers
+   * @param leftIndex - index of the integer in the plaintext that will be the left work
+   */
+  private final void encryptECB(int plainText[], int leftIndex) {
 
-    l ^= P[0];
-    for (i = 0; i <= BLOWFISH_ROUNDS - 2;) {
-      // Feistel substitution on left word
-      n = S[(l >> 24) & 0xff];
-      n += S[0x100 | ((l >> 16) & 0xff)];
-      n ^= S[0x200 | ((l >> 8) & 0xff)];
-      n += S[0x300 | (l & 0xff)];
-      r ^= n ^ P[++i];
+    int F_x;
+    int L = plainText[leftIndex];
+    int R = plainText[leftIndex + 1];
 
-      // Feistel substitution on right word
-      n = S[(r >> 24) & 0xff];
-      n += S[0x100 | ((r >> 16) & 0xff)];
-      n ^= S[0x200 | ((r >> 8) & 0xff)];
-      n += S[0x300 | (r & 0xff)];
-      l ^= n ^ P[++i];
+    L ^= P[0];
+    // Does 2 rounds in each loop thus no left right swapping necessary
+    for (int i = 0; i <= BLOWFISH_ROUNDS - 2;) {
+
+      // F_x = F(L)
+      F_x = S[(L >> 24) & 0xff];
+      F_x += S[256 + ((L >> 16) & 0xff)]; // addition is default modulo 32 (int)
+      F_x ^= S[512 + ((L >> 8) & 0xff)]; // notice that this is XOR
+      F_x += S[768 + (L & 0xff)];
+      R ^= F_x ^ P[++i];
+
+      // F_x = F(R)
+      F_x = S[(R >> 24) & 0xff];
+      F_x += S[256 + ((R >> 16) & 0xff)];
+      F_x ^= S[512 + ((R >> 8) & 0xff)];
+      F_x += S[768 + (R & 0xff)];
+      L ^= F_x ^ P[++i];
     }
-    lr[off] = r ^ P[BLOWFISH_ROUNDS + 1];
-    lr[off + 1] = l;
-  }
+    
+    plainText[leftIndex] = R ^ P[BLOWFISH_ROUNDS + 1];
+    plainText[leftIndex + 1] = L;
+  } 
 
   /**
    * Checks for correct version of salt number and returns the starting point of the salt that
@@ -423,5 +515,17 @@ public class BCryptImpl {
       throw new IllegalArgumentException("Number of rounds are incorrect.");
     }
     return numOfRounds;
+  }
+
+  /**
+   * Function to check if an input the password is correct corresponding to a hash previously
+   * generated.
+   * 
+   * @param plaintext
+   * @param hashed
+   * @return
+   */
+  public boolean bcryptCheck(String plaintext, String hashed) {
+    return (hashed.compareTo(bcryptHash(plaintext, hashed)) == 0);
   }
 }

@@ -4,7 +4,7 @@ import java.io.UnsupportedEncodingException;
 import java.security.SecureRandom;
 import java.util.Arrays;
 
-import util.Base64Util;
+import impl.util.Base64Util;
 
 /**
  * 

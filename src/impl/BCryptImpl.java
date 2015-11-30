@@ -219,6 +219,12 @@ public class BCryptImpl {
    * is different from the one mentioned by the author of bcrypt. Hence, a custom library.
    */
   private static final Base64Util BASE_64_UTIL = new Base64Util();
+  
+  /** Prevent cloning of this class by malacious caller **/
+  public final BCryptImpl clone() throws CloneNotSupportedException {
+    throw new CloneNotSupportedException();
+  }
+  
   /**
    * The function generates an encoded random salt to be used in hashPassword(). Unique salts in
    * password hashes provide best security against brute-force attacks.
@@ -277,6 +283,11 @@ public class BCryptImpl {
       e.printStackTrace();
       throw new RuntimeException("Unsupported charater set");
     }
+    
+    if (bytePassword.length > 55) {
+      throw new IllegalArgumentException(
+          "Password too long for safety gurantees of this algorithm");
+    }
 
     String salt = saltString.substring(round_offset + 3, round_offset + 25);
     byteSalt = BASE_64_UTIL.decode(salt, SALT_LENGTH);
@@ -289,8 +300,9 @@ public class BCryptImpl {
 
     // Encrypt ciphertext 64 times
     for (int i = 0; i < 64; i++) {
-      for (int j = 0; j < (ctext.length/2); j++)
+      for (int j = 0; j < (ctext.length/2); j++) {
         encryptECB(ctext, j*2);
+      }
     }
     
     byte hashed[] = new byte[ctext.length * 4];
@@ -533,6 +545,27 @@ public class BCryptImpl {
    * @return
    */
   public boolean bcryptCheck(String plaintext, String hashed) {
-    return (hashed.compareTo(bcryptHash(plaintext, hashed)) == 0);
+    return timingSafeEqualityCheck(hashed, bcryptHash(plaintext, hashed));
+  }
+  
+  /**
+   * Takes two strings as input and checks if they are equal in a secure way to thwart timing attacks
+   * @param actual
+   * @param expected
+   * @return 
+   *    true ... if actual = expected
+   *    false ... otherwise
+   */
+  private boolean timingSafeEqualityCheck(String actual, String expected) {
+    boolean result = true;
+    if ( actual.length() != expected.length() ) {
+      result = false;
+    }
+    for( int i = 0; i < actual.length(); i++) {
+      if( actual.charAt(i) != expected.charAt(i) ) {
+        result = false;
+      }
+    }
+    return result;
   }
 }

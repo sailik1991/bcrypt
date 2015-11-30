@@ -28,6 +28,8 @@ import impl.BCryptImpl;
  */
 public class BCryptImplTest {
 
+  private static final String longPassword = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef";
+
   /*
    * test_vectors[x][0] = password test_vectors[x][1] = random salt test_vectors[x][2] =
    * corresponding hash test_vectors obtained from Damien Miller
@@ -119,5 +121,10 @@ public class BCryptImplTest {
   @Test(expected=IllegalArgumentException.class)
   public void testRoundsAboveUpperLimit() {
     bc.bcryptCheck(test_vectors[0][0], "$2a$32$aTsUwsyowQuzRrDqFflhge");
+  }
+  
+  @Test(expected=IllegalArgumentException.class)
+  public void testPasswordsAbove55Bytes() {
+    bc.bcryptCheck(longPassword, test_vectors[0][1]);
   }
 }

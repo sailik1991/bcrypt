@@ -284,7 +284,7 @@ public class BCryptImpl {
       throw new RuntimeException("Unsupported charater set");
     }
     
-    if (bytePassword.length > 55) {
+    if (bytePassword.length > 56) {
       throw new IllegalArgumentException(
           "Password too long for safety gurantees of this algorithm");
     }
